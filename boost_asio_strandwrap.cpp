@@ -96,7 +96,7 @@ namespace detail {
   };
 
   template <typename T>
-  struct has_proxied_handler<T, my_void_t<typename T::proxied_handler_t>>
+  struct has_proxied_handler<T, my_void_t<decay_t<typename T::proxied_handler_t>>>
       : true_type
   {
   };
@@ -107,9 +107,9 @@ namespace detail {
   > : associator<associated_executor, Handler, Executor>
   {
   public:
-    using type = typename associated_executor<typename Handler::proxied_handler_t, Executor>::type;
+    using type = typename associated_executor<decay_t<typename Handler::proxied_handler_t>, Executor>::type;
     template<typename... Args>
-    static auto get(Handler proxy, const Args&... args)
+    static auto get(const Handler& proxy, const Args&... args)
       noexcept
     {
       return asio::get_associated_executor(proxy.Handler(), args...);
@@ -245,10 +245,10 @@ class Initiate {
 
     AsyncCallback(self_->stream_,
                       self_->AfterWrite,
-                      //boost::asio::bind_executor(
-                      //              self_->strand_,
-                      //              *this));
-                      self_->strand_.wrap(*this));
+                      boost::asio::bind_executor(
+                                    self_->strand_,
+                                    *this));
+                      //self_->strand_.wrap(*this));
 }
   Client* self_;
 };
