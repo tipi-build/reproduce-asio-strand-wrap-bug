@@ -30,7 +30,6 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/core/noncopyable.hpp>
 #include <boost/system/error_code.hpp>
-//#include <bp/sys/boost/asio.hpp>
 
 namespace user_code {
 template<typename ProxiedHandler>
@@ -45,7 +44,6 @@ public:
     : h_(std::forward<ProxiedHandler>(h))
   {}
 
-#define ASIO_HANDLER_INVOKE 1
 #if ASIO_HANDLER_INVOKE
   template<typename Function>
   friend void asio_handler_invoke(Function&& f, handler_proxy_t* self) {
@@ -59,19 +57,6 @@ public:
     return asio_handler_is_continuation(::boost::addressof(self->h_));
   }
 
-  constexpr ProxiedHandler& Handler() & noexcept {
-    return h_;
-  }
-  constexpr ProxiedHandler&& Handler() && noexcept {
-    return std::move(h_);
-  }
-  constexpr const ProxiedHandler& Handler() const& noexcept {
-    return h_;
-  }
-  constexpr const ProxiedHandler&& Handler() const&& noexcept {
-    return std::move(h_);
-  }
-private:
   ProxiedHandler h_;
 };
 
@@ -112,7 +97,7 @@ namespace detail {
     static auto get(const Handler& proxy, const Args&... args)
       noexcept
     {
-      return asio::get_associated_executor(proxy.Handler(), args...);
+      return asio::get_associated_executor(proxy.h_, args...);
     }
   };
 }  // namespace detail
@@ -128,6 +113,7 @@ class State {
   boost::asio::ip::tcp::socket* stream;
   std::function<void()> after_write;
   CompletionHandler            handler;
+  bool completion_reached = false;
 
   State( 
     boost::asio::ip::tcp::socket* stream,
@@ -161,6 +147,10 @@ class WriteOp : public user_code::handler_proxy_t<typename StateT::CompletionHan
     void operator()() {
       StateT& state = *state_;
       state.after_write();
+      
+      if (state.completion_reached) {
+        state.handler();
+      }
     }
   };
 
@@ -174,6 +164,7 @@ class WriteOp : public user_code::handler_proxy_t<typename StateT::CompletionHan
                   std::size_t bytes_transferred)
   {
     assert(state_);
+    std::cout << "ec: " << ec << " - " << bytes_transferred << std::endl;
     (void)bytes_transferred;
     AfterWriteOp op(boost::move(state_));
     op();
@@ -184,7 +175,6 @@ class WriteOp : public user_code::handler_proxy_t<typename StateT::CompletionHan
     StateT& state = *state_;
     boost::asio::async_write(*(state.stream),
                                 boost::asio::buffer("SOME DATA"),
-                                //state.strand_.wrap(std::move(*this));
                                 std::move(*this));
   }
 
@@ -245,15 +235,20 @@ class Initiate {
 
     AsyncCallback(self_->stream_,
                       self_->AfterWrite,
-                      boost::asio::bind_executor(
-                                    self_->strand_,
-                                    *this));
-                      //self_->strand_.wrap(*this));
+                      self_->strand_.wrap(*this)
+                      // Replace self_->strand_.wrap(*this)); with the following 
+                      // and strand guarantee holds again : 
+                      // boost::asio::bind_executor(self_->strand_,*this)
+                      );
+
 }
   Client* self_;
 };
 
  void Client::Start() {
+  boost::asio::ip::tcp::endpoint endpoint( boost::asio::ip::address::from_string("127.0.0.1"), 12345);
+  stream_.connect(endpoint);
+
   strand_.dispatch(Initiate(this));
 }
 
@@ -268,9 +263,10 @@ int main(int argc, char** argv) {
   boost::asio::ip::address addr = boost::asio::ip::address::from_string("127.0.0.1",
                                                                               ec);
   boost::asio::ip::tcp::endpoint ep(addr,
-                                       0);
+                                       12345);
   boost::asio::ip::tcp::acceptor acc(ios);
   acc.open(ep.protocol());
+  acc.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
   acc.bind(ep);
   acc.listen(1);
   ep = acc.local_endpoint();  
@@ -292,11 +288,11 @@ int main(int argc, char** argv) {
   size_t n = 0;
   do {
     n = ios.poll();
+    std::cout << "ios.poll() n= " << n << std::endl;
     if (ios.stopped()) {
         ios.restart();
     }
   } while (started && n == 0u);
   
-
   return 0;
 }

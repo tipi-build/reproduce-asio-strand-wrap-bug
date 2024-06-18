@@ -1,0 +1,1 @@
+- See `strand.wrap` and `strand.running_in_this_thread` https://github.com/boostorg/asio/commit/1bba3993540c06925efee154173f9e54a7a761b2
